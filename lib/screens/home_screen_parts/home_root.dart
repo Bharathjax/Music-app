@@ -12,6 +12,10 @@ class HomeScreen extends StatefulWidget {
   final Function(int) onFavorite;
   final ValueChanged<LibraryCategory> onOpenLibraryCategory;
   final VoidCallback onPlayPause;
+  final VoidCallback onContinue;
+  final String? currentSongTitle;
+  final String? currentSourceName;
+  final bool playbackContextReady;
   final Function(int) onAddToQueue;
   final Future<bool> Function(int, String) onRenameSong;
   final Future<bool> Function(int) onDeleteSong;
@@ -29,6 +33,10 @@ class HomeScreen extends StatefulWidget {
     required this.onFavorite,
     required this.onOpenLibraryCategory,
     required this.onPlayPause,
+    required this.onContinue,
+    required this.currentSongTitle,
+    required this.currentSourceName,
+    required this.playbackContextReady,
     required this.onAddToQueue,
     required this.onRenameSong,
     required this.onDeleteSong,
@@ -74,7 +82,10 @@ class _HomeScreenState extends State<HomeScreen>
               favoriteCount: favoriteCount,
               playlistCount: widget.playlistCount,
               isPlaying: widget.isPlaying,
-              onPlay: songCount == 0 ? null : () => widget.onSongSelected(0),
+              currentSongTitle: widget.currentSongTitle,
+              currentSourceName: widget.currentSourceName,
+              playbackContextReady: widget.playbackContextReady,
+              onContinue: widget.currentSongTitle == null ? null : widget.onContinue,
               onPlayPause: widget.onPlayPause,
               onFavorites: () => widget.onOpenLibraryCategory(
                 LibraryCategory.favorites,

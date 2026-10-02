@@ -157,6 +157,11 @@ class MusicPlaybackService : Service() {
         mediaSession.isActive = true
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopPlayback()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PLAY -> {
@@ -177,7 +182,7 @@ class MusicPlaybackService : Service() {
             ACTION_NEXT -> sendFlutterEvent(EVENT_NEXT)
             ACTION_PREVIOUS -> sendFlutterEvent(EVENT_PREVIOUS)
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun playPlayback(uriString: String, title: String, artist: String, album: String) {

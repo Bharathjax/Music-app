@@ -120,11 +120,6 @@ class MainContentLayerState extends State<MainContentLayer>
     bool updateNotifier = true,
     LibraryCategory? libraryCategory,
   }) {
-    if (index == 2) {
-      openSearch();
-      return;
-    }
-
     // Always update the pending Library entry before the same-tab early
     // return. This prevents a stale Home shortcut from changing the Back
     // destination after navigating within Library.
@@ -143,9 +138,8 @@ class MainContentLayerState extends State<MainContentLayer>
 
     // A normal Library-root visit has no pending Home shortcut.
 
-    final isHomeLibrary =
-        (_currentIndex == 0 && index == 1) ||
-        (_currentIndex == 1 && index == 0);
+    // Animate every top-level page switch: Home, Library, and Settings.
+    final shouldAnimatePageTransition = _currentIndex != index;
 
     if (updateNotifier && widget.selectedTabNotifier.value != index) {
       _updatingTabNotifier = true;
@@ -156,7 +150,7 @@ class MainContentLayerState extends State<MainContentLayer>
       }
     }
 
-    if (isHomeLibrary) {
+    if (shouldAnimatePageTransition) {
       widget.transitionActiveNotifier.value = true;
       setState(() {
         _transitionFrom = _currentIndex;
@@ -216,7 +210,7 @@ class MainContentLayerState extends State<MainContentLayer>
             _pendingLibraryCategory = null;
           },
         );
-      case 3:
+      case 2:
         return SettingsScreen(
           key: const ValueKey('settings'),
           currentThemeMode: widget.currentThemeMode,
@@ -237,8 +231,16 @@ class MainContentLayerState extends State<MainContentLayer>
                 permissionDenied: widget.playerController.permissionDenied,
                 favoriteSongs: widget.playerController.favoriteSongs,
                 playlistCount: widget.playlistController.playlists.length,
+                currentSongTitle: widget.playerController.hasPlaybackContext
+                    ? widget.playerController.currentSong?.title
+                    : null,
+                currentSourceName: widget.playerController.hasPlaybackContext
+                    ? (widget.playerController.playbackSourceName ?? 'All Songs')
+                    : null,
+                playbackContextReady: widget.playerController.playbackContextReady,
                 onSongSelected: widget.playerController.selectSong,
-                onPlayPause: widget.playerController.togglePlay,
+                onPlayPause: widget.playerController.playAllSongs,
+                onContinue: widget.playerController.continuePlaybackFromHero,
                 onAddToQueue: widget.playerController.addToQueue,
                 onRenameSong: (index, name) => widget.playerController.renameSong(index, name),
                 onDeleteSong: (index) => widget.playerController.deleteSong(index),
@@ -256,12 +258,14 @@ class MainContentLayerState extends State<MainContentLayer>
 
   Widget _buildPage() => _buildPageForIndex(_currentIndex);
 
-  Widget _buildHomeLibraryTransition() {
+  Widget _buildPageTransition() {
     final from = _transitionFrom;
     final to = _transitionTo;
     if (from == null || to == null) return _buildPage();
 
-    final incomingFromRight = from == 0 && to == 1;
+    // Higher tab indexes enter from the right; lower indexes enter from the left.
+    // This gives Home ↔ Library ↔ Settings the same directional motion.
+    final incomingFromRight = to > from;
     final animation = CurvedAnimation(
       parent: _pageTransitionController,
       curve: Curves.easeOutCubic,
@@ -328,7 +332,7 @@ class MainContentLayerState extends State<MainContentLayer>
   @override
   Widget build(BuildContext context) {
     final content = (_transitionFrom != null && _transitionTo != null)
-        ? _buildHomeLibraryTransition()
+        ? _buildPageTransition()
         : _buildStablePage();
 
     return GestureDetector(
@@ -364,68 +368,16 @@ class NowPlayingPageBridge extends StatelessWidget {
     required this.progress,
   });
 
-  List<Song> _currentPlayingPlaylistSongs() {
-    final source = playerController.playbackSourceName;
-    final playlistId = playerController.playbackSourcePlaylistId;
-
-    if (source == 'Favorites' && playlistId == null) {
-      return playerController.playbackQueue
-          .where((index) => index >= 0 && index < playerController.songs.length)
-          .map((index) => playerController.songs[index])
-          .toList();
-    }
-
-    if (playlistId == null) return const [];
-    final matches = playlistController.playlists.where((p) => p.id == playlistId);
-    if (matches.isEmpty) return const [];
-
-    // playbackQueue may contain songs manually added with "Add to Queue".
-    // Use it for the Now Playing queue so those temporary additions are
-    // visible and play after the original playlist songs.
-    return playerController.playbackQueue
-        .where((index) => index >= 0 && index < playerController.songs.length)
-        .map((index) => playerController.songs[index])
-        .toList();
-  }
-
-  void _reorderNowPlayingPlaylist(int oldIndex, int newIndex) {
-    final playlistId = playerController.playbackSourcePlaylistId;
-    if (playlistId == null) {
-      if (playerController.playbackSourceName != 'Favorites') return;
-      final reordered = List<int>.from(playerController.playbackQueue);
-      if (oldIndex < 0 || oldIndex >= reordered.length) return;
-      final target = newIndex.clamp(0, reordered.length).toInt();
-      final moved = reordered.removeAt(oldIndex);
-      reordered.insert((target > oldIndex ? target - 1 : target).clamp(0, reordered.length), moved);
-      playerController.updatePlaybackQueue(reordered, sourceName: 'Favorites');
-      return;
-    }
-
-    final matches = playlistController.playlists.where((p) => p.id == playlistId);
-    if (matches.isEmpty) return;
-
-    playlistController.reorderSongs(playlistId, oldIndex, newIndex);
-    final playlist = playlistController.playlists.firstWhere((p) => p.id == playlistId);
-    final reordered = playlistController
-        .songsForPlaylist(playlist, playerController.songs)
-        .map(playerController.songs.indexOf)
-        .where((index) => index >= 0)
-        .toList();
-
-    playerController.updatePlaybackQueue(
-      reordered,
-      sourceName: playlist.name,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return NowPlayingPage(
       song: song,
       nextSong: playerController.upcomingSong,
-      playlistName: playerController.playbackSourceName,
-      playlistSongs: _currentPlayingPlaylistSongs(),
-      onReorderPlaylist: _reorderNowPlayingPlaylist,
+      playlistName: playerController.playbackSourceName ?? 'All Songs',
+      queueSongs: playerController.upcomingSongs,
+      queueSongIndexes: playerController.upcomingQueue,
+      onReorderQueue: playerController.reorderPlaybackQueue,
+      onQueueSongTap: playerController.playQueuedSong,
       isPlaying: playerController.isPlaying,
       isShuffle: playerController.isShuffle,
       repeatMode: playerController.repeatMode,

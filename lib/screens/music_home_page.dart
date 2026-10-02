@@ -6,9 +6,7 @@ import '../controllers/music_player_controller.dart';
 import '../controllers/playlist_controller.dart';
 import '../widgets/bottom_navigation.dart';
 import '../widgets/mini_player.dart';
-import '../delegates/music_search_delegate.dart';
 import 'main_content_layer.dart';
-import '../models/song.dart';
 
 class MusicHomePage extends StatefulWidget {
   final ValueChanged<ThemeMode> onThemeChanged;
@@ -87,16 +85,6 @@ class _MusicHomePageState extends State<MusicHomePage> {
                   return MusicBottomNavigation(
                     currentIndex: currentIndex,
                     onTap: (index) {
-                      if (index == 2) {
-                        showSearch<Song?>(
-                          context: context,
-                          delegate: MusicSearchDelegate(
-                            songs: playerController.songs,
-                            onSongSelected: playerController.selectSong,
-                          ),
-                        );
-                        return;
-                      }
                       selectedTabNotifier.value = index;
                     },
                   );

@@ -245,7 +245,8 @@ class _PlaylistDetailViewState extends State<_PlaylistDetailView>
             widget.playerController?.currentSongIndex ?? widget.currentSongIndex;
         final playing = widget.playerController?.isPlaying ?? widget.isPlaying;
         final playlistIsPlaying =
-            playing && indexes.contains(currentIndex);
+            playing &&
+            widget.playerController?.playbackSourcePlaylistId == currentPlaylist.id;
 
         final panelColor = theme.scaffoldBackgroundColor;
 

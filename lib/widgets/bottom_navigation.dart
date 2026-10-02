@@ -52,16 +52,10 @@ class MusicBottomNavigation extends StatelessWidget {
                   onTap: () => onTap(1),
                 ),
                 _NavigationItem(
-                  icon: Icons.search_rounded,
-                  label: 'Search',
-                  selected: currentIndex == 2,
-                  onTap: () => onTap(2),
-                ),
-                _NavigationItem(
                   icon: Icons.settings_outlined,
                   label: 'Settings',
-                  selected: currentIndex == 3,
-                  onTap: () => onTap(3),
+                  selected: currentIndex == 2,
+                  onTap: () => onTap(2),
                 ),
               ],
             ),

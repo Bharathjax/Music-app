@@ -1,7 +1,0 @@
-[
-{
-  "directory": "C:/Users/bharathkumar.n/Music-main/packages/content_resolver/android/.cxx/Debug/2781y354/arm64-v8a",
-  "command": "C:\\Users\\bharathkumar.n\\Android\\Sdk\\ndk\\28.2.13676358\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=aarch64-none-linux-android24 --sysroot=C:/Users/bharathkumar.n/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Ddbufhelper_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -DBUILD_FOR_ANDROID -o CMakeFiles\\dbufhelper.dir\\cpp\\directBufferAndroid.cpp.o -c C:\\Users\\bharathkumar.n\\Music-main\\packages\\content_resolver\\android\\cpp\\directBufferAndroid.cpp",
-  "file": "C:\\Users\\bharathkumar.n\\Music-main\\packages\\content_resolver\\android\\cpp\\directBufferAndroid.cpp"
-}
-]

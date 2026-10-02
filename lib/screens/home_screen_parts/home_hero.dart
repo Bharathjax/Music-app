@@ -5,7 +5,10 @@ class _HomeHero extends StatelessWidget {
   final int songCount;
   final int favoriteCount;
   final int playlistCount;
-  final VoidCallback? onPlay;
+  final String? currentSongTitle;
+  final String? currentSourceName;
+  final bool playbackContextReady;
+  final VoidCallback? onContinue;
   final VoidCallback onPlayPause;
   final VoidCallback onFavorites;
   final bool isPlaying;
@@ -16,7 +19,10 @@ class _HomeHero extends StatelessWidget {
     required this.songCount,
     required this.favoriteCount,
     required this.playlistCount,
-    required this.onPlay,
+    required this.currentSongTitle,
+    required this.currentSourceName,
+    required this.playbackContextReady,
+    required this.onContinue,
     required this.onPlayPause,
     required this.onFavorites,
     required this.isPlaying,
@@ -129,74 +135,150 @@ class _HomeHero extends StatelessWidget {
                       ],
                     ),
                     const Spacer(),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Container(
-                          width: 68,
-                          height: 68,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(21),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: isLight
-                                  ? const [Color(0xFF6256D8), Color(0xFF8A65D8)]
-                                  : const [Color(0xFF9B8CFF), Color(0xFF6554B8)],
+                    if (!playbackContextReady)
+                      const SizedBox(height: 68)
+                    else if (currentSongTitle != null && currentSongTitle!.trim().isNotEmpty)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 68,
+                            height: 68,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(21),
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: isLight
+                                    ? const [Color(0xFF6256D8), Color(0xFF8A65D8)]
+                                    : const [Color(0xFF9B8CFF), Color(0xFF6554B8)],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: colors.primary.withValues(alpha: .22),
+                                  blurRadius: 18,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
                             ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: colors.primary.withValues(alpha: .22),
-                                blurRadius: 18,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
+                            child: Icon(
+                              isPlaying
+                                  ? Icons.graphic_eq_rounded
+                                  : Icons.music_note_rounded,
+                              color: Colors.white,
+                              size: 30,
+                            ),
                           ),
-                          child: const Icon(
-                            Icons.music_note_rounded,
-                            color: Colors.white,
-                            size: 30,
-                          ),
-                        ),
-                        const SizedBox(width: 15),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Your collection',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w700,
+                          const SizedBox(width: 15),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isPlaying ? 'Currently playing' : 'Continue playing',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.labelLarge?.copyWith(
+                                    color: colors.primary,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: .2,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '$songCount ${songCount == 1 ? 'song' : 'songs'}',
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: colors.onSurfaceVariant,
-                                  fontWeight: FontWeight.w600,
+                                const SizedBox(height: 5),
+                                Text(
+                                  currentSongTitle!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 4),
+                                Text(
+                                  'From ${currentSourceName ?? 'All Songs'}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      )
+                    else
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 68,
+                            height: 68,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(21),
+                              color: colors.primary.withValues(alpha: .10),
+                              border: Border.all(
+                                color: colors.primary.withValues(alpha: .12),
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.headphones_rounded,
+                              color: colors.primary,
+                              size: 29,
+                            ),
+                          ),
+                          const SizedBox(width: 15),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Ready to play',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '$songCount ${songCount == 1 ? 'song' : 'songs'} in your library',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     const Spacer(),
                     Row(
                       children: [
                         Expanded(
                           flex: 3,
                           child: _HomePrimaryAction(
-                            icon: isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            label: isPlaying ? 'Pause' : 'Play all',
-                            enabled: songCount > 0,
+                            icon: !playbackContextReady
+                                ? Icons.hourglass_top_rounded
+                                : (currentSongTitle != null && currentSongTitle!.trim().isNotEmpty && isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded),
+                            label: !playbackContextReady
+                                ? 'Loading'
+                                : (currentSongTitle != null && currentSongTitle!.trim().isNotEmpty
+                                    ? (isPlaying ? 'Pause' : 'Continue')
+                                    : 'Play all'),
+                            enabled: playbackContextReady && (currentSongTitle != null && currentSongTitle!.trim().isNotEmpty || songCount > 0),
                             color: colors.primary,
-                            onTap: songCount == 0 ? null : onPlayPause,
+                            onTap: !playbackContextReady
+                                ? null
+                                : (currentSongTitle != null && currentSongTitle!.trim().isNotEmpty
+                                    ? onContinue
+                                    : (songCount == 0 ? null : onPlayPause)),
                           ),
                         ),
                         const SizedBox(width: 8),

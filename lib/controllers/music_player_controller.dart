@@ -104,6 +104,15 @@ class MusicPlayerController
 
   bool isPlaying = false;
 
+  /// True after playback has actually been used or a saved playback
+  /// context has been restored.
+  bool get hasPlaybackContext =>
+      _hasActivePlayer ||
+      (_persistentStateLoaded && _persistedPlaybackSongKey != null);
+
+  /// True once the persisted player state has finished loading.
+  bool get playbackContextReady => _persistentStateLoaded;
+
   bool isShuffle = false;
 
   PlayerRepeatMode repeatMode =
@@ -167,7 +176,11 @@ class MusicPlayerController
   bool _persistentStateLoaded = false;
   Future<void> _persistentSave = Future<void>.value();
 
-  // Playback position and last-played song are intentionally NOT persisted.
+  // Home Hero playback context. Playback position is intentionally not saved.
+  String? _persistedPlaybackSongKey;
+  String? _persistedPlaybackSourceName;
+  String? _persistedPlaybackSourcePlaylistId;
+  List<String> _persistedPlaybackQueueKeys = [];
 
 
   // ==============================================================
@@ -240,6 +253,101 @@ class MusicPlayerController
 
 
   // ==============================================================
+  // LIVE UPCOMING QUEUE
+  // ==============================================================
+
+  List<int> get upcomingQueue {
+    if (songs.isEmpty) return const <int>[];
+
+    if (isShuffle && _shuffleOrder.isNotEmpty) {
+      final currentPosition = _shuffleOrder.indexOf(currentSongIndex);
+      if (currentPosition >= 0 && currentPosition < _shuffleOrder.length - 1) {
+        return List<int>.from(_shuffleOrder.sublist(currentPosition + 1));
+      }
+      return const <int>[];
+    }
+
+    final queue = _playbackQueue.isEmpty
+        ? List<int>.generate(songs.length, (index) => index)
+        : _playbackQueue;
+    final position = queue.indexOf(currentSongIndex);
+    if (position < 0 || queue.length <= 1) {
+      return const <int>[];
+    }
+
+    // Repeat All is a circular queue. Once we reach the end of the
+    // current cycle, the songs before the current song become the
+    // upcoming songs in the next cycle. This keeps the Next in Queue
+    // drawer populated even when playback has wrapped around.
+    if (repeatMode == PlayerRepeatMode.all) {
+      final upcoming = <int>[
+        ...queue.sublist(position + 1),
+        ...queue.sublist(0, position),
+      ];
+      return upcoming;
+    }
+
+    if (position >= queue.length - 1) {
+      return const <int>[];
+    }
+
+    return List<int>.from(queue.sublist(position + 1));
+  }
+
+  List<Song> get upcomingSongs => upcomingQueue
+      .where((index) => index >= 0 && index < songs.length)
+      .map((index) => songs[index])
+      .toList(growable: false);
+
+  /// Reorders only the songs that are still ahead of the current song.
+  /// The current song and already-played portion of the queue are untouched.
+  void reorderPlaybackQueue(int oldIndex, int newIndex) {
+    final upcoming = upcomingQueue.toList();
+    if (oldIndex < 0 || oldIndex >= upcoming.length) return;
+    if (newIndex < 0 || newIndex >= upcoming.length) return;
+
+    final moved = upcoming.removeAt(oldIndex);
+    upcoming.insert(newIndex, moved);
+
+    final queue = _playbackQueue.isEmpty
+        ? List<int>.generate(songs.length, (index) => index)
+        : List<int>.from(_playbackQueue);
+    final currentPosition = queue.indexOf(currentSongIndex);
+    if (currentPosition < 0) return;
+
+    final List<int> rebuilt;
+
+    if (!isShuffle && repeatMode == PlayerRepeatMode.all) {
+      // In Repeat All the displayed queue is circular and may contain
+      // songs from the beginning of the source after the current song.
+      // After a reorder, make the current song the new cycle anchor and
+      // keep the reordered upcoming songs as the next cycle.
+      rebuilt = <int>[
+        currentSongIndex,
+        ...upcoming,
+      ];
+    } else {
+      final prefix = queue.sublist(0, currentPosition + 1);
+      rebuilt = <int>[...prefix, ...upcoming];
+    }
+
+    _playbackQueue = rebuilt;
+    if (isShuffle) {
+      _shuffleOrder = List<int>.from(rebuilt);
+      _shufflePosition = _shuffleOrder.indexOf(currentSongIndex);
+    }
+
+    _savePersistentState();
+    _notifyUi();
+  }
+
+  Future<void> playQueuedSong(int songIndex) async {
+    if (!upcomingQueue.contains(songIndex)) return;
+    await _selectSongInternal(songIndex, forceRestart: true);
+  }
+
+
+  // ==============================================================
   // PERSISTENT FAVORITES / RECENTLY PLAYED
   // ==============================================================
 
@@ -275,12 +383,25 @@ class MusicPlayerController
             repeatMode = PlayerRepeatMode.values[savedRepeat];
           }
 
-          final favoriteKeys = (decoded['favorites'] as List<dynamic>? ?? const [])
-              .map((value) => value.toString())
-              .toSet();
-          final recentKeys = (decoded['recentlyPlayed'] as List<dynamic>? ?? const [])
-              .map((value) => value.toString())
-              .toList();
+          final favoriteKeys =
+              (decoded['favorites'] as List<dynamic>? ?? const [])
+                  .map((value) => value.toString())
+                  .toSet();
+          final recentKeys =
+              (decoded['recentlyPlayed'] as List<dynamic>? ?? const [])
+                  .map((value) => value.toString())
+                  .toList();
+
+          final savedPlaybackSongKey =
+              decoded['lastPlaybackSong']?.toString();
+          final savedPlaybackSourceName =
+              decoded['lastPlaybackSourceName']?.toString();
+          final savedPlaybackPlaylistId =
+              decoded['lastPlaybackPlaylistId']?.toString();
+          final savedQueueKeys =
+              (decoded['lastPlaybackQueue'] as List<dynamic>? ?? const [])
+                  .map((value) => value.toString())
+                  .toList();
 
           final keyToIndex = <String, int>{};
           for (var i = 0; i < songs.length; i++) {
@@ -304,6 +425,34 @@ class MusicPlayerController
                   .take(8),
             );
 
+          final savedSongIndex = savedPlaybackSongKey == null
+              ? null
+              : keyToIndex[savedPlaybackSongKey];
+
+          if (savedSongIndex != null) {
+            _persistedPlaybackSongKey = savedPlaybackSongKey;
+            _persistedPlaybackSourceName = savedPlaybackSourceName;
+            _persistedPlaybackSourcePlaylistId = savedPlaybackPlaylistId;
+            _persistedPlaybackQueueKeys = savedQueueKeys;
+
+            currentSongIndex = savedSongIndex;
+            _playbackSourceName = savedPlaybackSourceName;
+            _playbackSourcePlaylistId = savedPlaybackPlaylistId;
+
+            final restoredQueue = savedQueueKeys
+                .map((key) => keyToIndex[key])
+                .whereType<int>()
+                .toList();
+
+            _playbackQueue = restoredQueue.isNotEmpty
+                ? restoredQueue
+                : List<int>.generate(songs.length, (index) => index);
+          } else {
+            _persistedPlaybackSongKey = null;
+            _persistedPlaybackSourceName = null;
+            _persistedPlaybackSourcePlaylistId = null;
+            _persistedPlaybackQueueKeys = [];
+          }
         }
       }
     } catch (error) {
@@ -318,21 +467,43 @@ class MusicPlayerController
       try {
         final file = await _playerStateFile();
         await file.parent.create(recursive: true);
+
         final favoriteKeys = favoriteSongs
             .where((index) => index >= 0 && index < songs.length)
             .map((index) => _songKey(songs[index]))
             .toList();
+
         final recentKeys = recentlyPlayedIndexes
             .where((index) => index >= 0 && index < songs.length)
             .map((index) => _songKey(songs[index]))
             .take(8)
             .toList();
+
+        final playbackSong = currentSong;
+        final playbackSongKey = playbackSong == null
+            ? _persistedPlaybackSongKey
+            : _songKey(playbackSong);
+
+        final playbackSourceName =
+            _playbackSourceName ?? _persistedPlaybackSourceName;
+        final playbackPlaylistId =
+            _playbackSourcePlaylistId ?? _persistedPlaybackSourcePlaylistId;
+
+        final playbackQueueKeys = _playbackQueue
+            .where((index) => index >= 0 && index < songs.length)
+            .map((index) => _songKey(songs[index]))
+            .toList();
+
         await file.writeAsString(
           jsonEncode({
             'favorites': favoriteKeys,
             'recentlyPlayed': recentKeys,
             'shuffle': isShuffle,
             'repeatMode': repeatMode.index,
+            'lastPlaybackSong': playbackSongKey,
+            'lastPlaybackSourceName': playbackSourceName,
+            'lastPlaybackPlaylistId': playbackPlaylistId,
+            'lastPlaybackQueue': playbackQueueKeys,
           }),
           flush: true,
         );
@@ -752,6 +923,56 @@ class MusicPlayerController
 
 
   // ==============================================================
+  // HOME HERO: CONTINUE LAST PLAYBACK
+  // ==============================================================
+
+  /// Restores the saved song/source/queue and starts the song from 0.
+  /// Playback position is intentionally never restored.
+  Future<void> continuePlaybackFromHero() async {
+    if (isPlaying) {
+      await togglePlay();
+      return;
+    }
+
+    if (!_persistentStateLoaded) {
+      await _loadPersistentState();
+    }
+
+    if (songs.isEmpty) return;
+
+    final keyToIndex = <String, int>{
+      for (var i = 0; i < songs.length; i++) _songKey(songs[i]): i,
+    };
+
+    final savedSongKey = _persistedPlaybackSongKey;
+    if (savedSongKey == null) {
+      await togglePlay();
+      return;
+    }
+
+    final targetIndex = keyToIndex[savedSongKey];
+    if (targetIndex == null) return;
+
+    final restoredQueue = _persistedPlaybackQueueKeys
+        .map((key) => keyToIndex[key])
+        .whereType<int>()
+        .toList();
+
+    _playbackQueue = restoredQueue.isNotEmpty
+        ? restoredQueue
+        : <int>[targetIndex];
+
+    if (!_playbackQueue.contains(targetIndex)) {
+      _playbackQueue.insert(0, targetIndex);
+    }
+
+    _playbackSourceName = _persistedPlaybackSourceName;
+    _playbackSourcePlaylistId = _persistedPlaybackSourcePlaylistId;
+
+    await _selectSongInternal(targetIndex, forceRestart: true);
+  }
+
+  // ==============================================================
   // TOGGLE PLAY
   // ==============================================================
 
@@ -885,6 +1106,25 @@ class MusicPlayerController
     _playbackQueue =
         List<int>.generate(songs.length, (index) => index);
     await _selectSongInternal(index, forceRestart: false);
+  }
+
+  // ==============================================================
+  // HOME: PLAY ALL
+  // ==============================================================
+
+  Future<void> playAllSongs() async {
+    if (songs.isEmpty) return;
+
+    if (isPlaying && _playbackSourceName == 'All Songs') {
+      await togglePlay();
+      return;
+    }
+
+    await playSongQueue(
+      List<int>.generate(songs.length, (index) => index),
+      startPosition: 0,
+      sourceName: 'All Songs',
+    );
   }
 
   // ==============================================================
@@ -1091,6 +1331,14 @@ class MusicPlayerController
 
     currentSongIndex =
         index;
+
+    _persistedPlaybackSongKey = _songKey(song);
+    _persistedPlaybackSourceName = _playbackSourceName;
+    _persistedPlaybackSourcePlaylistId = _playbackSourcePlaylistId;
+    _persistedPlaybackQueueKeys = _playbackQueue
+        .where((item) => item >= 0 && item < songs.length)
+        .map((item) => _songKey(songs[item]))
+        .toList();
 
     recentlyPlayedIndexes.remove(index);
     recentlyPlayedIndexes.insert(0, index);

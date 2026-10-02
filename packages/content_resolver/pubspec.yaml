@@ -4,8 +4,8 @@ version: 0.3.6
 repository: https://github.com/espresso3389/flutter_content_resolver
 
 environment:
-  sdk: ^3.12.0
-  flutter: '>=3.44.0'
+  sdk: ">=3.10.0 <4.0.0"
+  flutter: ">=3.44.0"
 
 dependencies:
   flutter:
@@ -21,4 +21,3 @@ flutter:
       android:
         package: jp.espresso3389.content_resolver
         pluginClass: ContentResolverPlugin
-
