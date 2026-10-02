@@ -1,7 +1,6 @@
 name: music_player
 description: "A new Flutter project."
 publish_to: 'none'
-
 version: 1.0.0+1
 
 environment:
@@ -10,27 +9,23 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
   cupertino_icons: ^1.0.8
-
-  # Audio playback
   just_audio: ^0.10.6
-
-  # Persistent artwork cache
   path_provider: ^2.1.5
+  image_picker: ^1.1.2
+  image_cropper: ^12.2.1
+  audio_metadata_reader: ^1.8.0
+  content_resolver:
+    path: packages/content_resolver
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
   flutter_lints: ^6.0.0
-
-  # App icon generator
   flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
-
   fonts:
     - family: Inter
       fonts:
@@ -43,7 +38,6 @@ flutter:
         - asset: assets/fonts/Inter-Bold.otf
           weight: 700
 
-# App icon configuration
 flutter_launcher_icons:
   android: true
   ios: true

@@ -10,7 +10,6 @@ class MiniPlayer extends StatefulWidget {
   final ValueListenable<double> progressListenable;
   final VoidCallback onTap;
   final VoidCallback onPlayPause;
-  final VoidCallback onNext;
 
   const MiniPlayer({
     super.key,
@@ -19,7 +18,6 @@ class MiniPlayer extends StatefulWidget {
     required this.progressListenable,
     required this.onTap,
     required this.onPlayPause,
-    required this.onNext,
   });
 
   @override
@@ -48,7 +46,6 @@ class _MiniPlayerState extends State<MiniPlayer>
   // ============================================================
 
   late final AnimationController _animationController;
-  late final AnimationController _fadeController;
 
   // ============================================================
   // FUNCTION: INIT STATE
@@ -65,12 +62,6 @@ class _MiniPlayerState extends State<MiniPlayer>
       vsync: this,
       duration:
           const Duration(milliseconds: 700),
-    );
-
-    _fadeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-      value: widget.isPlaying ? 1.0 : 0.0,
     );
 
     _updateAnimation();
@@ -113,11 +104,9 @@ class _MiniPlayerState extends State<MiniPlayer>
       if (!_animationController.isAnimating) {
         _animationController.repeat();
       }
-      _fadeController.forward();
     } else {
-      // Stop the equalizer motion and smoothly reveal the artwork.
+      // Freeze the equalizer at its current frame while paused.
       _animationController.stop();
-      _fadeController.reverse();
     }
   }
 
@@ -189,210 +178,92 @@ class _MiniPlayerState extends State<MiniPlayer>
                     bottom: 7,
                   ),
 
-                  child: Row(
+                  child: Stack(
                     children: [
-
-                      // ============================================
-                      // ARTWORK
-                      // ============================================
-
-                      SizedBox(
-                        width: 56,
-                        height: 56,
-
-                        child: ClipRRect(
-                          borderRadius:
-                              BorderRadius.circular(18),
-
-                          child: FutureBuilder<
-                              Uint8List?>(
-                            future:
-                                _artworkFuture,
-                            initialData:
-                                _musicService.getCachedArtwork(widget.song),
-
-                            builder: (
-                              context,
-                              snapshot,
-                            ) {
-                              final Uint8List?
-                                  artwork =
-                                  snapshot.data;
-
-                              final bool
-                                  hasArtwork =
-                                  artwork != null &&
-                                  artwork.isNotEmpty;
-
-                              return Stack(
-                                fit: StackFit.expand,
-                                children: [
-
-                                  // ==================================
-                                  // REAL ARTWORK
-                                  // ==================================
-
-                                  if (hasArtwork)
-                                    Image.memory(
-                                      artwork,
-                                      fit: BoxFit.cover,
-                                      gaplessPlayback: true,
-                                    )
-                                  else
-                                    Container(
-                                      color: colors.surfaceContainerHighest,
-                                      alignment: Alignment.center,
-                                      child: Icon(
-                                        Icons.music_note_rounded,
-                                        color: colors.onSurfaceVariant,
-                                        size: 26,
-                                      ),
-                                    ),
-
-                                  // ==================================
-                                  // PLAYING OVERLAY / EQUALIZER
-                                  // ==================================
-
-                                  AnimatedBuilder(
-                                    animation: _fadeController,
-                                    builder: (context, child) {
-                                      final opacity = _fadeController.value;
-                                      return Stack(
-                                        fit: StackFit.expand,
-                                        children: [
-                                          if (hasArtwork)
-                                            Container(
-                                              color: Colors.black.withValues(
-                                                alpha: 0.30 * opacity,
-                                              ),
-                                            ),
-                                          if (opacity > 0.001)
-                                            Center(
-                                              child: Opacity(
-                                                opacity: opacity,
-                                                child: RepaintBoundary(
-                                                  child: CustomPaint(
-                                                    size: const Size(28, 28),
-                                                    painter: _MiniEqualizerPainter(
-                                                      animation: _animationController,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      );
-                                    },
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(width: 12),
-
-                      // ============================================
-                      // SONG DETAILS
-                      // ============================================
-
-                      Expanded(
-                        child: Column(
-                          mainAxisAlignment:
-                              MainAxisAlignment.center,
-
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-
+                      // LEFT TO RIGHT: equalizer → artwork → song name → play/pause
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.max,
                           children: [
-
-                            Text(
-                              widget.song.title,
-
-                              maxLines: 1,
-
-                              overflow:
-                                  TextOverflow.ellipsis,
-
-                              style: TextStyle(
-                                color:
-                                    colors.onSurface,
-
-                                fontSize: 14,
-
-                                fontWeight:
-                                    FontWeight.w600,
+                            SizedBox(
+                              width: 30,
+                              height: 56,
+                              child: Center(
+                                child: RepaintBoundary(
+                                  child: CustomPaint(
+                                    size: const Size(22, 30),
+                                    painter: _MiniEqualizerPainter(
+                                      animation: _animationController,
+                                      color: colors.primary,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-
+                            const SizedBox(width: 6),
+                            Hero(
+                              tag: 'now-playing-artwork-${widget.song.id}',
+                              transitionOnUserGestures: true,
+                              child: SizedBox(
+                                width: 56,
+                                height: 56,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(18),
+                                  child: FutureBuilder<Uint8List?>(
+                                    future: _artworkFuture,
+                                    initialData: _musicService.getCachedArtwork(widget.song),
+                                    builder: (context, snapshot) {
+                                      final Uint8List? artwork = snapshot.data;
+                                      final bool hasArtwork = artwork != null && artwork.isNotEmpty;
+                                      return hasArtwork
+                                          ? Image.memory(artwork, fit: BoxFit.cover, gaplessPlayback: true)
+                                          : Container(
+                                              color: colors.surfaceContainerHighest,
+                                              alignment: Alignment.center,
+                                              child: Icon(
+                                                Icons.music_note_rounded,
+                                                color: colors.onSurfaceVariant,
+                                                size: 26,
+                                              ),
+                                            );
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: Text(
+                                  widget.song.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: colors.onSurface,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: widget.onPlayPause,
+                              tooltip: widget.isPlaying ? 'Pause' : 'Play',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+                              icon: Icon(
+                                widget.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                color: colors.onSurface,
+                                size: 27,
+                              ),
+                            ),
                           ],
                         ),
                       ),
 
-                      // ============================================
-                      // PLAY / PAUSE
-                      // ============================================
-
-                      IconButton(
-                        onPressed:
-                            widget.onPlayPause,
-
-                        tooltip:
-                            widget.isPlaying
-                                ? 'Pause'
-                                : 'Play',
-
-                        padding:
-                            EdgeInsets.zero,
-
-                        constraints:
-                            const BoxConstraints(
-                          minWidth: 42,
-                          minHeight: 42,
-                        ),
-
-                        icon: Icon(
-                          widget.isPlaying
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-
-                          color:
-                              colors.onSurface,
-
-                          size: 27,
-                        ),
-                      ),
-
-                      // ============================================
-                      // NEXT
-                      // ============================================
-
-                      IconButton(
-                        onPressed:
-                            widget.onNext,
-
-                        tooltip:
-                            'Next',
-
-                        padding:
-                            EdgeInsets.zero,
-
-                        constraints:
-                            const BoxConstraints(
-                          minWidth: 42,
-                          minHeight: 42,
-                        ),
-
-                        icon: Icon(
-                          Icons.skip_next_rounded,
-
-                          color:
-                              colors.onSurface,
-
-                          size: 27,
-                        ),
-                      ),
+                      // RIGHT: play/pause is part of the main row above.
                     ],
                   ),
                 ),
@@ -441,7 +312,6 @@ class _MiniPlayerState extends State<MiniPlayer>
   @override
   void dispose() {
     _animationController.dispose();
-    _fadeController.dispose();
     super.dispose();
   }
 
@@ -476,12 +346,12 @@ class _MiniPlayerState extends State<MiniPlayer>
 
 class _MiniEqualizerPainter extends CustomPainter {
   final Animation<double> animation;
+  final Color color;
 
-  _MiniEqualizerPainter({required this.animation}) : super(repaint: animation);
+  _MiniEqualizerPainter({required this.animation, required this.color}) : super(repaint: animation);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.white;
     final value = animation.value;
     const widths = 4.0;
     const gap = 3.0;
@@ -500,11 +370,11 @@ class _MiniEqualizerPainter extends CustomPainter {
       final h = 22 * heights[i];
       final x = left + i * (widths + gap);
       final y = (size.height - h) / 2;
+      final rect = Rect.fromLTWH(x, y, widths, h);
+      final paint = Paint()..color = color;
+
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, y, widths, h),
-          const Radius.circular(4),
-        ),
+        RRect.fromRectAndRadius(rect, const Radius.circular(4)),
         paint,
       );
     }

@@ -13,6 +13,7 @@ class PlaylistController extends ChangeNotifier {
   final List<Playlist> _playlists = [];
   bool _loaded = false;
   bool _saving = false;
+  bool _saveRequested = false;
 
   List<Playlist> get playlists => List.unmodifiable(_playlists);
   bool get isLoaded => _loaded;
@@ -172,15 +173,25 @@ class PlaylistController extends ChangeNotifier {
   }
 
   Future<void> flush() async {
+    _saveRequested = true;
     if (_saving) return;
+
     _saving = true;
     try {
-      final file = await _file();
-      await file.parent.create(recursive: true);
-      final json = jsonEncode(_playlists.map((playlist) => playlist.toJson()).toList());
-      await file.writeAsString(json, flush: true);
+      while (_saveRequested) {
+        _saveRequested = false;
+        final snapshot = List<Playlist>.from(_playlists);
+        final json = jsonEncode(snapshot.map((playlist) => playlist.toJson()).toList());
+        final file = await _file();
+        await file.parent.create(recursive: true);
+        await file.writeAsString(json, flush: true);
+        // Any mutation that occurred during the write sets _saveRequested
+        // again, causing the latest state to be persisted in the next pass.
+      }
     } catch (error) {
       debugPrint('Playlist save failed: $error');
+      // Keep the request set so a later mutation/retry can persist current state.
+      _saveRequested = true;
     } finally {
       _saving = false;
     }

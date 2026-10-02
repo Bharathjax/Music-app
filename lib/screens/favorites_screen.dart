@@ -10,6 +10,8 @@ class FavoritesScreen extends StatelessWidget {
   final Set<int> favoriteSongs;
   final Function(int) onSongSelected;
   final Function(int) onFavorite;
+  final VoidCallback onPlayPause;
+  final Function(int) onAddToQueue;
 
   const FavoritesScreen({
     super.key,
@@ -19,6 +21,8 @@ class FavoritesScreen extends StatelessWidget {
     required this.favoriteSongs,
     required this.onSongSelected,
     required this.onFavorite,
+    required this.onPlayPause,
+    required this.onAddToQueue,
   });
 
   // ==========================================================
@@ -155,6 +159,10 @@ class FavoritesScreen extends StatelessWidget {
               songIndex,
             );
           },
+
+          onAddToQueue: () => onAddToQueue(songIndex),
+
+          onPlayPause: songIndex == currentSongIndex ? onPlayPause : null,
         );
       },
     );

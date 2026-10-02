@@ -1,6 +1,7 @@
 package com.example.music_player
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
@@ -26,8 +27,27 @@ class MainActivity : FlutterActivity() {
     private val MUSIC_PERMISSION_REQUEST_CODE =
         1001
 
+    private val MEDIA_WRITE_REQUEST_CODE =
+        1002
+
+    private val MEDIA_DELETE_REQUEST_CODE =
+        1003
+
     private var permissionResult:
         MethodChannel.Result? = null
+
+    private var mediaWritePermissionResult:
+        MethodChannel.Result? = null
+
+    private var mediaDeletePermissionResult:
+        MethodChannel.Result? = null
+
+    private var pendingRenameUri: Uri? = null
+    private var pendingRenameName: String? = null
+    private var pendingRenameResult: MethodChannel.Result? = null
+
+    private var pendingDeleteUri: Uri? = null
+    private var pendingDeleteResult: MethodChannel.Result? = null
 
     private var mediaPlayer:
         MediaPlayer? = null
@@ -92,6 +112,62 @@ class MainActivity : FlutterActivity() {
                     result.success(
                         getArtwork(uriString)
                     )
+                }
+
+
+                // =================================================
+                // REQUEST MEDIA WRITE ACCESS
+                // =================================================
+
+                "requestMediaWriteAccess" -> {
+
+                    val uriString =
+                        call.argument<String>("uri")
+
+                    if (uriString.isNullOrEmpty()) {
+
+                        result.error(
+                            "INVALID_URI",
+                            "Media URI is missing.",
+                            null
+                        )
+
+                        return@setMethodCallHandler
+                    }
+
+                    requestMediaWriteAccess(
+                        uriString,
+                        result
+                    )
+                }
+
+
+                // =================================================
+                // RENAME SONG FILE
+                // =================================================
+
+                "renameSong" -> {
+                    val uriString = call.argument<String>("uri")
+                    val newName = call.argument<String>("newName")
+                    if (uriString.isNullOrBlank() || newName.isNullOrBlank()) {
+                        result.error("INVALID_ARGUMENT", "Song URI and new name are required.", null)
+                        return@setMethodCallHandler
+                    }
+                    renameSongFile(uriString, newName.trim(), result)
+                }
+
+
+                // =================================================
+                // DELETE SONG FILE
+                // =================================================
+
+                "deleteSong" -> {
+                    val uriString = call.argument<String>("uri")
+                    if (uriString.isNullOrBlank()) {
+                        result.error("INVALID_URI", "Song URI is missing.", null)
+                        return@setMethodCallHandler
+                    }
+                    deleteSongFile(uriString, result)
                 }
 
 
@@ -360,23 +436,27 @@ class MainActivity : FlutterActivity() {
     private fun hasMusicPermission():
         Boolean {
 
-        val permission =
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.TIRAMISU
-            ) {
-
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return ContextCompat.checkSelfPermission(
+                this,
                 Manifest.permission.READ_MEDIA_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        }
 
-            } else {
-
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            }
-
-        return ContextCompat.checkSelfPermission(
+        val readGranted = ContextCompat.checkSelfPermission(
             this,
-            permission
+            Manifest.permission.READ_EXTERNAL_STORAGE
         ) == PackageManager.PERMISSION_GRANTED
+
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            val writeGranted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            return readGranted && writeGranted
+        }
+
+        return readGranted
     }
 
 
@@ -398,24 +478,233 @@ class MainActivity : FlutterActivity() {
         permissionResult =
             result
 
-        val permission =
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.TIRAMISU
-            ) {
-
-                Manifest.permission.READ_MEDIA_AUDIO
-
-            } else {
-
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            }
+        val permissions = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P ->
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                )
+            else ->
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
 
         ActivityCompat.requestPermissions(
             this,
-            arrayOf(permission),
+            permissions,
             MUSIC_PERMISSION_REQUEST_CODE
         )
+    }
+
+
+    // =============================================================
+    // RENAME SONG FILE
+    // =============================================================
+
+    private fun renameSongFile(
+        uriString: String,
+        requestedName: String,
+        result: MethodChannel.Result
+    ) {
+        val uri = Uri.parse(uriString)
+        val newName = buildDisplayName(uri, requestedName)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            requestWriteThenRename(uri, newName, result)
+            return
+        }
+
+        try {
+            val values = android.content.ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
+                put(MediaStore.Audio.Media.TITLE, titleFromDisplayName(newName))
+            }
+            val updated = contentResolver.update(uri, values, null, null)
+            result.success(updated > 0)
+        } catch (e: android.app.RecoverableSecurityException) {
+            pendingRenameUri = uri
+            pendingRenameName = newName
+            pendingRenameResult = result
+            startIntentSenderForResult(
+                e.userAction.actionIntent.intentSender,
+                MEDIA_WRITE_REQUEST_CODE,
+                null, 0, 0, 0
+            )
+        } catch (e: Exception) {
+            result.error("RENAME_FAILED", e.message ?: "Unable to rename song.", null)
+        }
+    }
+
+    private fun requestWriteThenRename(
+        uri: Uri,
+        newName: String,
+        result: MethodChannel.Result
+    ) {
+        try {
+            val pendingIntent = MediaStore.createWriteRequest(contentResolver, listOf(uri))
+            pendingRenameUri = uri
+            pendingRenameName = newName
+            pendingRenameResult = result
+            startIntentSenderForResult(
+                pendingIntent.intentSender,
+                MEDIA_WRITE_REQUEST_CODE,
+                null, 0, 0, 0
+            )
+        } catch (e: Exception) {
+            result.error("MEDIA_WRITE_REQUEST_ERROR", e.message ?: "Unable to request media write access.", null)
+        }
+    }
+
+    private fun performPendingRename(): Boolean {
+        val uri = pendingRenameUri ?: return false
+        val name = pendingRenameName ?: return false
+        return try {
+            val values = android.content.ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            }
+            contentResolver.update(uri, values, null, null) > 0
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun titleFromDisplayName(displayName: String): String {
+        val dot = displayName.lastIndexOf('.')
+        return if (dot > 0) displayName.substring(0, dot) else displayName
+    }
+
+    private fun buildDisplayName(uri: Uri, requestedName: String): String {
+        var currentName: String? = null
+        contentResolver.query(
+            uri,
+            arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+            null, null, null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) currentName = cursor.getString(0)
+        }
+
+        val clean = requestedName.trim()
+        if (clean.contains('.')) return clean
+
+        val current = currentName?.trim().orEmpty()
+        val dot = current.lastIndexOf('.')
+        val extension = if (dot > 0 && dot < current.length - 1) current.substring(dot) else ""
+        return clean + extension
+    }
+
+    // =============================================================
+    // DELETE SONG FILE
+    // =============================================================
+
+    private fun deleteSongFile(
+        uriString: String,
+        result: MethodChannel.Result
+    ) {
+        val uri = Uri.parse(uriString)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val pendingIntent = MediaStore.createDeleteRequest(contentResolver, listOf(uri))
+                mediaDeletePermissionResult = result
+                pendingDeleteUri = uri
+                startIntentSenderForResult(
+                    pendingIntent.intentSender,
+                    MEDIA_DELETE_REQUEST_CODE,
+                    null, 0, 0, 0
+                )
+            } catch (e: Exception) {
+                result.error("MEDIA_DELETE_REQUEST_ERROR", e.message ?: "Unable to request delete access.", null)
+            }
+            return
+        }
+
+        try {
+            val deleted = contentResolver.delete(uri, null, null) > 0
+            result.success(deleted)
+        } catch (e: android.app.RecoverableSecurityException) {
+            pendingDeleteUri = uri
+            pendingDeleteResult = result
+            startIntentSenderForResult(
+                e.userAction.actionIntent.intentSender,
+                MEDIA_DELETE_REQUEST_CODE,
+                null, 0, 0, 0
+            )
+        } catch (e: Exception) {
+            result.error("DELETE_FAILED", e.message ?: "Unable to delete song.", null)
+        }
+    }
+
+    private fun performPendingDelete(): Boolean {
+        val uri = pendingDeleteUri ?: return false
+        return try {
+            contentResolver.delete(uri, null, null) > 0
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+
+    // =============================================================
+    // REQUEST MEDIA WRITE ACCESS
+    // =============================================================
+
+    private fun requestMediaWriteAccess(
+        uriString: String,
+        result: MethodChannel.Result
+    ) {
+
+        val uri = try {
+            Uri.parse(uriString)
+        } catch (e: Exception) {
+            result.error(
+                "INVALID_URI",
+                "Invalid media URI.",
+                null
+            )
+            return
+        }
+
+        // Android 11+ provides MediaStore.createWriteRequest(),
+        // which is the supported way to ask the user to authorize
+        // modification of an existing media item.
+        //
+        // On older Android versions, the Flutter-side write operation
+        // is allowed to proceed and the platform/storage layer handles
+        // the applicable legacy permission model.
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            result.success(true)
+            return
+        }
+
+        try {
+            val pendingIntent =
+                MediaStore.createWriteRequest(
+                    contentResolver,
+                    listOf(uri)
+                )
+
+            mediaWritePermissionResult =
+                result
+
+            startIntentSenderForResult(
+                pendingIntent.intentSender,
+                MEDIA_WRITE_REQUEST_CODE,
+                null,
+                0,
+                0,
+                0
+            )
+        } catch (e: Exception) {
+            mediaWritePermissionResult = null
+
+            result.error(
+                "MEDIA_WRITE_REQUEST_ERROR",
+                e.message ?: "Unable to request media write access.",
+                null
+            )
+        }
     }
 
 
@@ -456,6 +745,54 @@ class MainActivity : FlutterActivity() {
         )
 
         permissionResult = null
+    }
+
+
+    // =============================================================
+    // MEDIA WRITE REQUEST RESULT
+    // =============================================================
+
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
+        super.onActivityResult(
+            requestCode,
+            resultCode,
+            data
+        )
+
+        if (requestCode == MEDIA_WRITE_REQUEST_CODE) {
+            val granted = resultCode == RESULT_OK
+
+            val renameResult = pendingRenameResult
+            if (renameResult != null) {
+                val success = granted && performPendingRename()
+                renameResult.success(success)
+                pendingRenameResult = null
+                pendingRenameUri = null
+                pendingRenameName = null
+            } else {
+                mediaWritePermissionResult?.success(granted)
+                mediaWritePermissionResult = null
+            }
+            return
+        }
+
+        if (requestCode == MEDIA_DELETE_REQUEST_CODE) {
+            val granted = resultCode == RESULT_OK
+            val deleteResult = pendingDeleteResult
+            if (deleteResult != null) {
+                val success = granted && performPendingDelete()
+                deleteResult.success(success)
+                pendingDeleteResult = null
+                pendingDeleteUri = null
+            } else {
+                mediaDeletePermissionResult?.success(granted)
+                mediaDeletePermissionResult = null
+            }
+        }
     }
 
 
@@ -897,6 +1234,8 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
 
         completionEventSink = null
+        permissionResult = null
+        mediaWritePermissionResult = null
 
         mediaPlayer?.release()
 

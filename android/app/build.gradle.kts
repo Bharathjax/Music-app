@@ -14,6 +14,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.music_player"
@@ -32,6 +33,11 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+}
+
+
+dependencies {
+    implementation("androidx.media:media:1.7.0")
 }
 
 kotlin {

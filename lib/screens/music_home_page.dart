@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../controllers/music_player_controller.dart';
@@ -115,6 +117,7 @@ class _MusicHomePageState extends State<MusicHomePage> {
     selectedTabNotifier.dispose();
     transitionActiveNotifier.dispose();
     playerController.dispose();
+    playlistController.dispose();
     super.dispose();
   }
 }
@@ -134,19 +137,22 @@ class _PersistentMiniPlayerLayer extends StatelessWidget {
 
     Navigator.of(context).push(
       PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 400),
-        reverseTransitionDuration: const Duration(milliseconds: 400),
+        transitionDuration: const Duration(milliseconds: 360),
+        reverseTransitionDuration: const Duration(milliseconds: 360),
         pageBuilder: (context, animation, secondaryAnimation) {
           return _NowPlayingPlayerBridge(
             playerController: playerController,
             playlistController: playlistController,
+            initialProgress: playerController.progressNotifier.value,
           );
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final slide = Tween<Offset>(
             begin: const Offset(0, 1.0),
             end: Offset.zero,
-          ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(animation);
+          ).chain(
+            CurveTween(curve: Curves.easeOutCubic),
+          ).animate(animation);
           // Keep the Now Playing transition fully opaque. The previous
           // FadeTransition blended the page underneath with the incoming
           // screen, which produced visible ghosting during the slide-up.
@@ -176,7 +182,6 @@ class _PersistentMiniPlayerLayer extends StatelessWidget {
               progressListenable: playerController.progressNotifier,
               onTap: () => _openNowPlaying(context),
               onPlayPause: playerController.togglePlay,
-              onNext: playerController.nextSong,
             ),
           ),
         );
@@ -185,33 +190,73 @@ class _PersistentMiniPlayerLayer extends StatelessWidget {
   }
 }
 
-class _NowPlayingPlayerBridge extends StatelessWidget {
+class _NowPlayingPlayerBridge extends StatefulWidget {
   final MusicPlayerController playerController;
   final PlaylistController playlistController;
+  final double initialProgress;
 
   const _NowPlayingPlayerBridge({
     required this.playerController,
     required this.playlistController,
+    required this.initialProgress,
   });
 
   @override
+  State<_NowPlayingPlayerBridge> createState() =>
+      _NowPlayingPlayerBridgeState();
+}
+
+class _NowPlayingPlayerBridgeState extends State<_NowPlayingPlayerBridge> {
+  Timer? _transitionTimer;
+  bool _followLiveProgress = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Keep the page's high-frequency progress rebuilds out of the first
+    // part of the route animation. This keeps the slide-up transform stable.
+    _transitionTimer = Timer(const Duration(milliseconds: 370), () {
+      if (!mounted) return;
+      setState(() => _followLiveProgress = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _transitionTimer?.cancel();
+    super.dispose();
+  }
+
+  Widget _buildPage(double progress) {
+    final current = widget.playerController.currentSong;
+    if (current == null) return const SizedBox.shrink();
+
+    return NowPlayingPageBridge(
+      playerController: widget.playerController,
+      playlistController: widget.playlistController,
+      progress: progress,
+      song: current,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final current = widget.playerController.currentSong;
+    if (current == null) return const SizedBox.shrink();
+
+    if (!_followLiveProgress) {
+      return _buildPage(widget.initialProgress);
+    }
+
     return ValueListenableBuilder<int>(
-      valueListenable: playerController.uiStateNotifier,
+      valueListenable: widget.playerController.uiStateNotifier,
       builder: (context, _, _) {
-        final current = playerController.currentSong;
-        if (current == null) return const SizedBox.shrink();
+        final song = widget.playerController.currentSong;
+        if (song == null) return const SizedBox.shrink();
 
         return ValueListenableBuilder<double>(
-          valueListenable: playerController.progressNotifier,
-          builder: (context, liveProgress, _) {
-            return NowPlayingPageBridge(
-              playerController: playerController,
-              playlistController: playlistController,
-              progress: liveProgress,
-              song: current,
-            );
-          },
+          valueListenable: widget.playerController.progressNotifier,
+          builder: (context, liveProgress, _) => _buildPage(liveProgress),
         );
       },
     );

@@ -116,15 +116,17 @@ class _NavigationItem extends StatelessWidget {
                           : colors.onSurface.withValues(alpha: 0.52),
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  const SizedBox(height: 5),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    width: selected ? 5 : 4,
+                    height: selected ? 5 : 4,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
                       color: selected
-                          ? colors.onSurface
-                          : colors.onSurface.withValues(alpha: 0.52),
+                          ? colors.primary
+                          : colors.onSurface.withValues(alpha: 0.0),
                     ),
                   ),
                 ],

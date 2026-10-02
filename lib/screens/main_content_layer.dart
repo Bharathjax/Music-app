@@ -193,6 +193,9 @@ class MainContentLayerState extends State<MainContentLayer>
           currentSongIndex: widget.playerController.currentSongIndex,
           isPlaying: widget.playerController.isPlaying,
           onFavorite: widget.playerController.toggleFavorite,
+          onAddToQueue: widget.playerController.addToQueue,
+          onRenameSong: (index, name) => widget.playerController.renameSong(index, name),
+          onDeleteSong: (index) => widget.playerController.deleteSong(index),
           playerController: widget.playerController,
           onPlayQueue: (indexes, startPosition) =>
               widget.playerController.playSongQueue(
@@ -236,6 +239,9 @@ class MainContentLayerState extends State<MainContentLayer>
                 playlistCount: widget.playlistController.playlists.length,
                 onSongSelected: widget.playerController.selectSong,
                 onPlayPause: widget.playerController.togglePlay,
+                onAddToQueue: widget.playerController.addToQueue,
+                onRenameSong: (index, name) => widget.playerController.renameSong(index, name),
+                onDeleteSong: (index) => widget.playerController.deleteSong(index),
                 onFavorite: widget.playerController.toggleFavorite,
                 onOpenLibraryCategory: (category) => _selectTab(
                   1,
@@ -299,14 +305,37 @@ class MainContentLayerState extends State<MainContentLayer>
     );
   }
 
+  void _handleHorizontalSwipe(DragEndDetails details) {
+    if (_transitionFrom != null || _transitionTo != null) return;
+
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < 350) return;
+
+    // Swipe left: Home -> Library.
+    if (_currentIndex == 0 && velocity < 0) {
+      _selectTab(1);
+      return;
+    }
+
+    // Swipe right: Library -> Home.
+    if (_currentIndex == 1 && velocity > 0) {
+      _selectTab(0);
+    }
+  }
+
   Widget _buildStablePage() => _buildPage();
 
   @override
   Widget build(BuildContext context) {
-    if (_transitionFrom != null && _transitionTo != null) {
-      return _buildHomeLibraryTransition();
-    }
-    return _buildStablePage();
+    final content = (_transitionFrom != null && _transitionTo != null)
+        ? _buildHomeLibraryTransition()
+        : _buildStablePage();
+
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragEnd: _handleHorizontalSwipe,
+      child: content,
+    );
   }
 
   @override
@@ -349,7 +378,14 @@ class NowPlayingPageBridge extends StatelessWidget {
     if (playlistId == null) return const [];
     final matches = playlistController.playlists.where((p) => p.id == playlistId);
     if (matches.isEmpty) return const [];
-    return playlistController.songsForPlaylist(matches.first, playerController.songs);
+
+    // playbackQueue may contain songs manually added with "Add to Queue".
+    // Use it for the Now Playing queue so those temporary additions are
+    // visible and play after the original playlist songs.
+    return playerController.playbackQueue
+        .where((index) => index >= 0 && index < playerController.songs.length)
+        .map((index) => playerController.songs[index])
+        .toList();
   }
 
   void _reorderNowPlayingPlaylist(int oldIndex, int newIndex) {
@@ -396,7 +432,7 @@ class NowPlayingPageBridge extends StatelessWidget {
       durationMilliseconds: playerController.songDuration,
       progress: progress,
       onPlayPause: playerController.togglePlay,
-      onNext: playerController.nextSong,
+      onNext: () => playerController.nextSong(),
       onPrevious: playerController.previousSong,
       onShuffle: playerController.toggleShuffle,
       onRepeat: playerController.toggleRepeat,

@@ -47,6 +47,7 @@ class MusicPlayerController
   // ==============================================================
 
   Timer? _positionTimer;
+  bool _positionReadInFlight = false;
 
 
   // ==============================================================
@@ -149,6 +150,10 @@ class MusicPlayerController
 
   bool _completionHandled = false;
 
+  // Serializes competing async playback requests. A newer request invalidates
+  // an older one before it can overwrite player state.
+  int _playbackOperationId = 0;
+
 
   // ==============================================================
   // FAVORITES
@@ -161,6 +166,8 @@ class MusicPlayerController
 
   bool _persistentStateLoaded = false;
   Future<void> _persistentSave = Future<void>.value();
+
+  // Playback position and last-played song are intentionally NOT persisted.
 
 
   // ==============================================================
@@ -296,6 +303,7 @@ class MusicPlayerController
                   .whereType<int>()
                   .take(8),
             );
+
         }
       }
     } catch (error) {
@@ -417,15 +425,35 @@ class MusicPlayerController
       }
 
       final List<Song> deviceSongs = await musicService.getDeviceSongs();
+      final currentKey = currentSong == null ? null : _songKey(currentSong!);
+      final oldQueueKeys = _playbackQueue
+          .where((index) => index >= 0 && index < songs.length)
+          .map((index) => _songKey(songs[index]))
+          .toList();
+      final wasPlaying = isPlaying;
+
       songs = deviceSongs;
       await _saveCachedSongs(deviceSongs);
       _persistentStateLoaded = false;
       await _loadPersistentState();
 
+      final keyToNewIndex = <String, int>{
+        for (var i = 0; i < songs.length; i++) _songKey(songs[i]): i,
+      };
+      final remappedQueue = oldQueueKeys
+          .map((key) => keyToNewIndex[key])
+          .whereType<int>()
+          .toList();
+
       if (songs.isEmpty) {
         currentSongIndex = 0;
+        _playbackQueue = [];
       } else {
-        currentSongIndex = currentSongIndex.clamp(0, songs.length - 1).toInt();
+        final preservedIndex = currentKey == null ? null : keyToNewIndex[currentKey];
+        currentSongIndex = preservedIndex ?? currentSongIndex.clamp(0, songs.length - 1).toInt();
+        _playbackQueue = remappedQueue.isNotEmpty
+            ? remappedQueue
+            : List<int>.generate(songs.length, (index) => index);
       }
       _shuffleOrder.clear();
       _shufflePosition = 0;
@@ -433,11 +461,14 @@ class MusicPlayerController
         _createShuffleOrder(keepCurrentFirst: true);
       }
 
-      if (songs.isEmpty) {
+      if (songs.isEmpty || (wasPlaying && currentKey != null && !keyToNewIndex.containsKey(currentKey))) {
+        _playbackOperationId++;
+        try { await musicService.stopSong(); } catch (_) {}
         isPlaying = false;
         songDuration = 0;
         progress = 0.0;
         _hasActivePlayer = false;
+        _positionTimer?.cancel();
       }
     } catch (e) {
       debugPrint('Error loading device songs: $e');
@@ -452,68 +483,58 @@ class MusicPlayerController
   // ==============================================================
 
   void startPositionTracking() {
-
     _positionTimer?.cancel();
 
-
-    _positionTimer =
-        Timer.periodic(
-      const Duration(
-        milliseconds: 500,
-      ),
+    _positionTimer = Timer.periodic(
+      const Duration(milliseconds: 500),
       (_) async {
-
-        if (!isPlaying) {
+        if ((!isPlaying && !_hasActivePlayer) ||
+            _positionReadInFlight) {
           return;
         }
 
+        _positionReadInFlight = true;
 
         try {
+          // Always verify the real native playback state.
+          //
+          // This is important for external events such as:
+          // - headphones being unplugged
+          // - Bluetooth device disconnecting
+          // - notification/media-session pause
+          // - Android stopping the native player
+          final bool nativeIsPlaying =
+              await musicService.isPlaying();
+
+          if (!nativeIsPlaying) {
+            isPlaying = false;
+            _positionTimer?.cancel();
+            _notifyUi();
+            return;
+          }
 
           final int position =
-              await musicService
-                  .getPlaybackPosition();
-
+              await musicService.getPlaybackPosition();
 
           final int duration =
-              await musicService
-                  .getSongDuration();
-
+              await musicService.getSongDuration();
 
           if (duration <= 0) {
             return;
           }
 
+          songDuration = duration;
 
-          songDuration =
-              duration;
+          progress = (position / duration).clamp(0.0, 1.0);
 
-
-          progress =
-              (position / duration)
-                  .clamp(
-            0.0,
-            1.0,
-          );
-
-
-          /*
-           * IMPORTANT:
-           *
-           * We intentionally do NOT detect song completion
-           * here anymore.
-           *
-           * Android MediaPlayer sends the exact completion
-           * event through EventChannel.
-           */
           // Progress is delivered through progressNotifier only.
           // Do not rebuild Home/Library on every 500ms tick.
-
         } catch (e) {
-
           debugPrint(
             'Error tracking playback position: $e',
           );
+        } finally {
+          _positionReadInFlight = false;
         }
       },
     );
@@ -536,6 +557,44 @@ class MusicPlayerController
             'songCompleted') {
 
           _handleNativeSongCompletion();
+
+        } else if (event ==
+            'nextSong') {
+
+          nextSong();
+
+        } else if (event ==
+            'previousSong') {
+
+          previousSong();
+
+        } else if (event ==
+            'paused') {
+
+          // Native playback was paused outside Flutter,
+          // for example when headphones are disconnected.
+          if (isPlaying) {
+            isPlaying = false;
+            _notifyUi();
+          }
+
+          // Keep polling so Flutter can detect native playback
+          // resuming when headphones are connected again.
+          if (_hasActivePlayer) {
+            startPositionTracking();
+          }
+
+        } else if (event ==
+            'resumed') {
+
+          // Native playback resumed outside Flutter, for example
+          // when headphones are connected again.
+          if (!isPlaying) {
+            isPlaying = true;
+            _notifyUi();
+          }
+
+          startPositionTracking();
         }
       },
 
@@ -591,6 +650,7 @@ class MusicPlayerController
 
   Future<void>
       _handleSongCompletion() async {
+    final operationId = ++_playbackOperationId;
 
     if (songs.isEmpty) {
       return;
@@ -622,6 +682,7 @@ class MusicPlayerController
             await musicService
                 .playSong(song);
 
+        if (operationId != _playbackOperationId) return;
 
         if (!started) {
 
@@ -642,9 +703,9 @@ class MusicPlayerController
         isPlaying = true;
 
 
-        songDuration =
-            await musicService
-                .getSongDuration();
+        final duration = await musicService.getSongDuration();
+        if (operationId != _playbackOperationId) return;
+        songDuration = duration;
 
 
         /*
@@ -695,6 +756,7 @@ class MusicPlayerController
   // ==============================================================
 
   Future<void> togglePlay() async {
+    final operationId = ++_playbackOperationId;
 
     final Song? song =
         currentSong;
@@ -715,6 +777,8 @@ class MusicPlayerController
 
         await musicService
             .pauseSong();
+
+        if (operationId != _playbackOperationId) return;
 
 
         isPlaying = false;
@@ -737,6 +801,8 @@ class MusicPlayerController
 
         await musicService
             .resumeSong();
+
+        if (operationId != _playbackOperationId) return;
 
 
         isPlaying = true;
@@ -769,8 +835,13 @@ class MusicPlayerController
           await musicService
               .playSong(song);
 
+      if (operationId != _playbackOperationId) return;
 
       if (!started) {
+        isPlaying = false;
+        _hasActivePlayer = false;
+        _positionTimer?.cancel();
+        _notifyUi();
         return;
       }
 
@@ -782,9 +853,9 @@ class MusicPlayerController
       progress = 0.0;
 
 
-      songDuration =
-          await musicService
-              .getSongDuration();
+      final duration = await musicService.getSongDuration();
+      if (operationId != _playbackOperationId) return;
+      songDuration = duration;
 
 
       _completionHandled = false;
@@ -813,7 +884,144 @@ class MusicPlayerController
     _playbackSourcePlaylistId = null;
     _playbackQueue =
         List<int>.generate(songs.length, (index) => index);
-    await _selectSongInternal(index);
+    await _selectSongInternal(index, forceRestart: false);
+  }
+
+  // ==============================================================
+  // RENAME SONG FILE
+  // ==============================================================
+
+  Future<bool> renameSong(int index, String newName) async {
+    if (index < 0 || index >= songs.length) return false;
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) return false;
+
+    final oldSong = songs[index];
+    final ok = await musicService.renameSong(oldSong, trimmed);
+    if (!ok) return false;
+
+    final renamed = Song(
+      title: _displayTitleWithoutExtension(trimmed, oldSong.title),
+      artist: oldSong.artist,
+      id: oldSong.id,
+      album: oldSong.album,
+      duration: oldSong.duration,
+      uri: oldSong.uri,
+    );
+    songs[index] = renamed;
+    await _saveCachedSongs(songs);
+    _notifyUi();
+    return true;
+  }
+
+  String _displayTitleWithoutExtension(String name, String fallback) {
+    final value = name.trim();
+    final dot = value.lastIndexOf('.');
+    if (dot > 0 && dot < value.length - 1) return value.substring(0, dot);
+    return value.isEmpty ? fallback : value;
+  }
+
+  // ==============================================================
+  // DELETE SONG FILE
+  // ==============================================================
+
+  Future<bool> deleteSong(int index) async {
+    if (index < 0 || index >= songs.length) return false;
+
+    final song = songs[index];
+    final wasCurrent = currentSongIndex == index;
+
+    final ok = await musicService.deleteSong(song);
+    if (!ok) return false;
+
+    if (wasCurrent) {
+      _playbackOperationId++;
+      try {
+        await musicService.stopSong();
+      } catch (_) {}
+      isPlaying = false;
+      _hasActivePlayer = false;
+      progress = 0.0;
+      songDuration = 0;
+      _positionTimer?.cancel();
+    }
+
+    songs.removeAt(index);
+
+    favoriteSongs
+      ..removeWhere((item) => item == index)
+      ..removeWhere((item) => item < 0 || item >= songs.length);
+
+    final updatedFavorites = favoriteSongs.map((item) {
+      return item > index ? item - 1 : item;
+    }).toSet();
+    favoriteSongs
+      ..clear()
+      ..addAll(updatedFavorites);
+
+    recentlyPlayedIndexes
+      ..removeWhere((item) => item == index)
+      ..replaceRange(0, recentlyPlayedIndexes.length, recentlyPlayedIndexes.map((item) => item > index ? item - 1 : item));
+
+    _playbackQueue = _playbackQueue
+        .where((item) => item != index)
+        .map((item) => item > index ? item - 1 : item)
+        .where((item) => item >= 0 && item < songs.length)
+        .toList();
+
+    _shuffleOrder = _shuffleOrder
+        .where((item) => item != index)
+        .map((item) => item > index ? item - 1 : item)
+        .where((item) => item >= 0 && item < songs.length)
+        .toList();
+
+    if (songs.isEmpty) {
+      currentSongIndex = 0;
+      _playbackQueue = [];
+      _shuffleOrder = [];
+      _shufflePosition = 0;
+    } else if (wasCurrent) {
+      currentSongIndex = index.clamp(0, songs.length - 1).toInt();
+    } else if (currentSongIndex > index) {
+      currentSongIndex--;
+    } else {
+      currentSongIndex = currentSongIndex.clamp(0, songs.length - 1).toInt();
+    }
+
+    await _saveCachedSongs(songs);
+    _savePersistentState();
+    _notifyUi();
+    return true;
+  }
+
+  // Add one song to the end of the current playback queue without
+  // interrupting the song that is currently playing. This is a temporary
+  // playback-queue operation; it does not modify Favorites or saved playlists.
+  void addToQueue(int songIndex) {
+    if (songIndex < 0 || songIndex >= songs.length) return;
+
+    // If there is no explicit queue, establish the normal library queue first.
+    // This keeps Add to Queue consistent whether playback was started from
+    // a playlist/favorites or directly from the library.
+    if (_playbackQueue.isEmpty) {
+      _playbackQueue = List<int>.generate(songs.length, (index) => index);
+    }
+
+    // Do not de-duplicate here. A playback queue can intentionally contain
+    // the same song more than once.
+    _playbackQueue.add(songIndex);
+
+    if (isShuffle) {
+      // Preserve the current shuffle cycle and place the manually queued song
+      // after the songs already present in that cycle.
+      if (_shuffleOrder.length == _playbackQueue.length - 1) {
+        _shuffleOrder.add(songIndex);
+      } else {
+        _createShuffleOrder(keepCurrentFirst: true);
+      }
+    }
+
+    _notifyUi();
   }
 
   // Start a song using a specific queue. This is used by playlists so
@@ -851,10 +1059,11 @@ class MusicPlayerController
     _playbackSourcePlaylistId = sourcePlaylistId;
     final int safePosition =
         startPosition.clamp(0, queue.length - 1).toInt();
-    await _selectSongInternal(queue[safePosition]);
+    await _selectSongInternal(queue[safePosition], forceRestart: true);
   }
 
-  Future<void> _selectSongInternal(int index) async {
+  Future<void> _selectSongInternal(int index, {required bool forceRestart}) async {
+    final operationId = ++_playbackOperationId;
 
     if (index < 0 ||
         index >= songs.length) {
@@ -867,12 +1076,8 @@ class MusicPlayerController
     // SAME SONG
     // ------------------------------------------------------------
 
-    if (index ==
-            currentSongIndex &&
-        _hasActivePlayer) {
-
+    if (index == currentSongIndex && _hasActivePlayer && !forceRestart) {
       await togglePlay();
-
       return;
     }
 
@@ -883,7 +1088,6 @@ class MusicPlayerController
 
     final Song song =
         songs[index];
-
 
     currentSongIndex =
         index;
@@ -950,6 +1154,7 @@ class MusicPlayerController
           await musicService
               .playSong(song);
 
+      if (operationId != _playbackOperationId) return;
 
       if (!started) {
 
@@ -968,10 +1173,9 @@ class MusicPlayerController
       isPlaying = true;
 
 
-      songDuration =
-          await musicService
-              .getSongDuration();
-
+      final duration = await musicService.getSongDuration();
+      if (operationId != _playbackOperationId) return;
+      songDuration = duration;
 
       startPositionTracking();
 
@@ -1086,6 +1290,7 @@ class MusicPlayerController
   Future<void> nextSong({
     bool automatic = false,
   }) async {
+    final operationId = ++_playbackOperationId;
 
     if (songs.isEmpty) {
       return;
@@ -1239,6 +1444,7 @@ class MusicPlayerController
           await musicService
               .playSong(song);
 
+      if (operationId != _playbackOperationId) return;
 
       if (!started) {
 
@@ -1257,10 +1463,9 @@ class MusicPlayerController
       isPlaying = true;
 
 
-      songDuration =
-          await musicService
-              .getSongDuration();
-
+      final duration = await musicService.getSongDuration();
+      if (operationId != _playbackOperationId) return;
+      songDuration = duration;
 
       startPositionTracking();
 
@@ -1289,6 +1494,7 @@ class MusicPlayerController
 
   Future<void>
       _stopAtEnd() async {
+    ++_playbackOperationId;
 
     try {
 
@@ -1321,6 +1527,7 @@ class MusicPlayerController
   // ==============================================================
 
   Future<void> previousSong() async {
+    final operationId = ++_playbackOperationId;
 
     if (songs.isEmpty) {
       return;
@@ -1417,6 +1624,8 @@ class MusicPlayerController
           await musicService
               .playSong(song);
 
+      if (operationId != _playbackOperationId) return;
+
 
       if (!started) {
 
@@ -1435,10 +1644,9 @@ class MusicPlayerController
       isPlaying = true;
 
 
-      songDuration =
-          await musicService
-              .getSongDuration();
-
+      final duration = await musicService.getSongDuration();
+      if (operationId != _playbackOperationId) return;
+      songDuration = duration;
 
       startPositionTracking();
 
@@ -1586,6 +1794,7 @@ class MusicPlayerController
 
   @override
   void dispose() {
+    ++_playbackOperationId;
 
     _positionTimer?.cancel();
 

@@ -1,0 +1,3 @@
+C:/Users/bharathkumar.n/Music-main/packages/content_resolver/android/.cxx/RelWithDebInfo/4u3c3944/arm64-v8a/CMakeFiles/dbufhelper.dir
+C:/Users/bharathkumar.n/Music-main/packages/content_resolver/android/.cxx/RelWithDebInfo/4u3c3944/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/bharathkumar.n/Music-main/packages/content_resolver/android/.cxx/RelWithDebInfo/4u3c3944/arm64-v8a/CMakeFiles/rebuild_cache.dir

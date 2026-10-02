@@ -1,0 +1,27 @@
+{
+  "buildFiles": [
+    "C:\\Users\\bharathkumar.n\\Music-main\\packages\\content_resolver\\android\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\bharathkumar.n\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "C:\\Users\\bharathkumar.n\\Music-main\\packages\\content_resolver\\android\\.cxx\\RelWithDebInfo\\4u3c3944\\x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\bharathkumar.n\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "C:\\Users\\bharathkumar.n\\Music-main\\packages\\content_resolver\\android\\.cxx\\RelWithDebInfo\\4u3c3944\\x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "dbufhelper::@6890427a1f51a3e7e1df": {
+      "artifactName": "dbufhelper",
+      "abi": "x86",
+      "output": "C:\\Users\\bharathkumar.n\\Music-main\\build\\content_resolver\\intermediates\\cxx\\RelWithDebInfo\\4u3c3944\\obj\\x86\\libdbufhelper.so",
+      "runtimeFiles": []
+    }
+  }
+}
